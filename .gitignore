@@ -53,3 +53,4 @@ gradle/
 gradlew
 gradlew.bat
 unused.txt
+.vscode/settings.json
