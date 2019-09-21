@@ -25,19 +25,18 @@ async def create_pool(init_loop, **kw):
     """
     logging.info("create database connection pool...")
     global __pool
-    if __name__ == '__main__':
-        __pool = await aiomysql.create_pool(
-            host=kw.get('host', 'localhost'),
-            port=kw.get('port', 3306),
-            user=kw['user'],
-            password=kw['password'],
-            db=kw['db'],
-            charset=kw.get('charset', 'utf-8'),
-            autocommit=kw.get('autocommit', True),
-            maxsize=kw.get('maxsize', 10),
-            minsize=kw.get('minsize', 1),
-            loop=init_loop
-        )
+    __pool = await aiomysql.create_pool(
+        host=kw.get('host', 'localhost'),
+        port=kw.get('port', 3306),
+        user=kw['user'],
+        password=kw['password'],
+        db=kw['db'],
+        charset=kw.get('charset', 'utf8'),
+        autocommit=kw.get('autocommit', True),
+        maxsize=kw.get('maxsize', 10),
+        minsize=kw.get('minsize', 1),
+        loop=init_loop
+    )
 
 
 # select
@@ -73,21 +72,19 @@ async def execute(sql, args, auto_commit=True):
     :return:
     """
     log_sql(sql)
-    global __pool
     async with __pool.get() as conn:
         if not auto_commit:
             await conn.begin()
         try:
-            cursor = await conn.cursor()
-            await cursor.execute(sql.repalce('?', '%s' % (args or ())))
-            affected = cursor.rowcount
-            await cursor.close()
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(sql.replace('?', '%s'), args)
+                affected = cur.rowcount
             if not auto_commit:
                 await conn.commit()
         except BaseException as e:
             logging.error('执行数据库脚本失败!', e)
             if not auto_commit:
-                conn.rollback()
+                await conn.rollback()
             raise
         return affected
 
@@ -116,88 +113,80 @@ class Field(object):
 # 映射varchar字段
 class StringField(Field):
 
-    def __init__(self, name, ddl='varchar(100)', is_primary=False, default=None):
+    def __init__(self, name=None, ddl='varchar(100)', is_primary=False, default=None):
         super(StringField, self).__init__(name, ddl, is_primary, default)
 
 
 # 映射boolean类型字段
 class BooleanField(Field):
 
-    def __init__(self, name, default=False):
+    def __init__(self, name=None, default=False):
         super(BooleanField, self).__init__(name, 'boolean', False, default)
 
 
 # 映射int类型字段
 class IntegerField(Field):
 
-    def __init__(self, name, is_primary=False, default=0):
+    def __init__(self, name=None, is_primary=False, default=0):
         super(IntegerField, self).__init__(name, 'int', is_primary, default)
 
 
 # 映射float类型字段
 class FloatField(Field):
     
-    def __init__(self, name, default=0.0):
+    def __init__(self, name=None, default=0.0):
         super(FloatField, self).__init__(name, 'float', False, default)
 
 
 # 映射Text类型字段
 class TextField(Field):
 
-    def __init__(self, name, default=None):
+    def __init__(self, name=None, default=None):
         super(TextField, self).__init__(name, 'text', False, default)
 
 
 # 元类
 class ModelMetaClass(type):
 
-    def __new__(mcs, name, base, attrs):
-        # 排除Model类型本身
-        if name == 'model':
-            return type.__new__(mcs, name, base, attrs)
-
-        # 表名
+    def __new__(mcs, name, bases, attrs):
+        if name == 'Model':
+            return type.__new__(mcs, name, bases, attrs)
         table_name = attrs.get('__table__', None) or name
-        logging.info('found model:%s (table: %s)' % (name, table_name))
+        logging.info('found model: %s (table: %s)' % (name, table_name))
 
         # 字段映射
         mappings = dict()
         # 字段和主键
         fields = []
         primary_key = None
-        for k, v in attrs.item():
-            # 是否为主键
+        for k, v in attrs.items():
             if isinstance(v, Field):
-                logging.info('Found mapping %s====>%s' % (k, v))
+                logging.info('  found mapping: %s ==> %s' % (k, v))
                 mappings[k] = v
                 if v.primary_key:
-                    raise RuntimeError('Duplicate primary key for field: %s' % k)
-                primary_key = k
-            else:
-                fields.append(k)
+                    # 找到主键:
+                    if primary_key:
+                        raise RuntimeError('Duplicate primary key for field: %s' % k)
+                    primary_key = k
+                else:
+                    fields.append(k)
         if not primary_key:
-            raise RuntimeError('Not Found primary key')
-        # 移除mapping包含fields的k
+            raise RuntimeError('Primary key not found.')
         for k in mappings.keys():
             attrs.pop(k)
-        # 保存映射关系
-        attrs['__mapping__'] = mappings
-        # 表名
-        attrs['__table__'] = table_name
-        # 主键
-        attrs['__fields__'] = fields
-        # 主键外的其他属性值
-        attrs['__primary_key__'] = primary_key
-        # SQL字段
         escaped_fields = list(map(lambda f: '`%s`' % f, fields))
-        # 注入默认的select, insert, update, delete
-        attrs['__select__'] = 'select %s, %s from %s' % (primary_key, ','.join(escaped_fields), table_name)
-        attrs['__insert__'] = 'insert into %s (%s, %s) values(%s, %s)' % (
-            table_name, primary_key, ','.join(escaped_fields), create_args_string(len(escaped_fields) + 1))
-        attrs['__update__'] = 'update `%s` set %s where `%s` = ?' % (
-            table_name, ','.join(list(map(lambda f: '`%s`= ?' % (mappings.get(f).name or f)), fields)), primary_key)
-        attrs['__delete__'] = 'delete from `%s` where `%s` = ?' % (table_name, primary_key)
-        return type.__new__(mcs, name, base, attrs)
+        # 保存属性和列的映射关系
+        attrs['__mappings__'] = mappings
+        attrs['__table__'] = table_name
+        # 主键属性名
+        attrs['__primary_key__'] = primary_key
+        # 除主键外的属性名
+        attrs['__fields__'] = fields
+        attrs['__select__'] = 'select `%s`, %s from `%s`' % (primary_key, ', '.join(escaped_fields), table_name)
+        attrs['__insert__'] = 'insert into `%s` (%s, `%s`) values (%s)' % (table_name, ', '.join(escaped_fields), primary_key, create_args_string(len(escaped_fields) + 1))
+        attrs['__update__'] = 'update `%s` set %s where `%s`=?' % (table_name, ', '.join(map(lambda f: '`%s`=?' % (mappings.get(f).name or f), fields)), primary_key)
+        attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (table_name, primary_key)
+        return type.__new__(mcs, name, bases, attrs)
 
 
 # 基类, 所有实体类都继承该类, 会通过ModelMetaClass自动扫描映射关系
@@ -206,27 +195,26 @@ class Model(dict, metaclass=ModelMetaClass):
     def __init__(self, **kw):
         super(Model, self).__init__(**kw)
 
-    def __getattr__(self, item):
+    def __getattr__(self, key):
         try:
-            return self[item]
+            return self[key]
         except KeyError:
-            raise AttributeError(r"'Model' object has no attribute '%s'" % item)
+            raise AttributeError(r"'Model' object has no attribute '%s'" % key)
 
     def __setattr__(self, key, value):
         self[key] = value
 
-    # 提供公用的获得value的函数
     def get_value(self, key):
-        return getattr(self, key)
+        return getattr(self, key, None)
 
-    # get默认值
     def get_default_value(self, key):
-        value = getattr(self, key)
+        value = getattr(self, key, None)
         if value is None:
             field = self.__mappings__[key]
-            value = field.default() if callable(field.default) else field.default
-            logging.info('using default value for %s: %s' % (key, str(value)))
-            setattr(self, key, value)
+            if field.default is not None:
+                value = field.default() if callable(field.default) else field.default
+                logging.debug('using default value for %s: %s' % (key, str(value)))
+                setattr(self, key, value)
         return value
 
     @classmethod
@@ -284,23 +272,18 @@ class Model(dict, metaclass=ModelMetaClass):
         return rs[0]['__num__']
 
     async def save(self):
-        """
-        保存
-        :return:
-        """
-        # 先将所有的属性, 通过自定义的方法获取对应的值
-        args = list(map(self.get_default_value, self.__field__))
-        args.append(self.get_value(self.__primary_key__))
-        row = await execute(self.__insert__, args)
-        if row != 1:
-            logging.warning('failed to insert record: %s ' % row)
+        args = list(map(self.get_default_value, self.__fields__))
+        args.append(self.get_default_value(self.__primary_key__))
+        rows = await execute(self.__insert__, args)
+        if rows != 1:
+            logging.warning('failed to insert record: affected rows: %s' % rows)
 
     async def modify(self):
         """
         更新
         :return:
         """
-        args = list(map(self.get_default_value, self.__field__))
+        args = list(map(self.get_default_value, self.__fields__))
         args.append(self.get_value(self.__primary_key__))
         row = await execute(self.__update__, args)
         if row != 1:
