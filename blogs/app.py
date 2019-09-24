@@ -21,10 +21,10 @@ __author__ = 'boris han'
 
 def init_jinja2(app, **kw):
     logging.info('init jinja2...')
-    options=dict(
+    options = dict(
         autoescape=kw.get('autoescape', True),
-        block_start_string = kw.get('block_start_string', '{%'),
-        block_end_string = kw.get('block_end_string', '%}'),
+        block_start_string=kw.get('block_start_string', '{%'),
+        block_end_string=kw.get('block_end_string', '%}'),
         variable_start_string=kw.get('variable_start_string', '{{'),
         variable_end_string=kw.get('variable_end_string', '}}'),
         auto_reload=kw.get('auto_reload', True)
@@ -54,13 +54,14 @@ async def logger_factory(app, handler):
 
 async def data_factory(app, handler):
     logging.info('start data_factory in app: %s' % app)
+
     async def parse_data(request):
         if request.method == 'POST':
             if request.content_type.startswith('application/json'):
                 request.__data__ = await request.json()
                 logging.info('request json: %s.' % str(request.__data__))
             elif request.content_type.startswith('application/x-wwww-form-urlencoded'):
-                request.__data__= await request.post()
+                request.__data__ = await request.post()
                 logging.info('request form: %s.' % str(request.__data__))
         return await handler(request)
     return parse_data
@@ -139,10 +140,10 @@ def datetime_filter(special_time):
     return u'%s年%s月%s日' % (format_datetime.year, format_datetime.month, format_datetime.day)
 
 
-async def init(loop):
+async def init(init_loop):
     await Orm.create_pool(
-        init_loop=loop, host='127.0.0.1', user='test', password='Aas_12345678', db='awesome')
-    app = web.Application(loop=loop, middlewares=[logger_factory, response_factory])
+        init_loop=init_loop, host='127.0.0.1', user='test', password='Aas_12345678', db='awesome')
+    app = web.Application(loop=init_loop, middlewares=[logger_factory, response_factory])
     init_jinja2(app, filters=dict(datetime=datetime_filter))
     add_routes(app, 'handlers')
     add_static(app)
