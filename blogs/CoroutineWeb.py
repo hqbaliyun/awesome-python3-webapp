@@ -216,14 +216,14 @@ class RequestHandler(object):
             return dict(error=e.error, data=e.data, message=e.message)
 
 
-def add_static(app, func):
+def add_static(app):
     """
       添加静态资源路径
     :param app:
     :param func:
     :return:
     """
-    path = os.path.join(os.path.dirname(os.path.abspath(func)), 'static')
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
     app.router.add_static('/static/', path)
     logging.info('add static: %s => %s.' % ('/static/', path))
 
